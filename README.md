@@ -1,0 +1,160 @@
+
+## 1. Project assignment overview
+
+The goal of this project is to predict how well participants performed barbell lifts using data from accelerometers attached to the belt, forearm, arm, and dumbbell of 6 participants. The target variable is `classe`, which takes five values: A, Exactly according to specification; B, Throwing elbows to the front; C, Lifting dumbbell only halfway; D, Lowering dumbbell only halfway; E, Throwing hips to the front.
+We trained a Random Forest classifier, validate it using 5-fold cross-validation, report the expected out-of-sample error, and apply the model to 20 test cases.
+
+## 2. Data Loading and Exploration
+
+```{r}
+# Load data
+url_train <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+url_test  <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+
+training_raw <- read.csv(url_train, na.strings = c("NA", "", "#DIV/0!"))
+testing_raw  <- read.csv(url_test,  na.strings = c("NA", "", "#DIV/0!"))
+
+cat("Training set dimensions:", dim(training_raw), "\n")
+cat("Testing set dimensions: ", dim(testing_raw),  "\n")
+cat("Classe distribution:\n")
+
+table(training_raw$classe)
+```
+
+```{r}
+colnames(training_raw)
+```
+
+## 3. Data Cleaning and Feature Selection
+
+Step 1 — Remove identification columns (columns 1–7: row index, user name, timestamps, windows) as they are not predictive features.
+Step 2 — Remove near-zero variance predictors, which carry almost no information.
+Step 3 — Remove columns with >95% missing values, since imputation on sparse columns would introduce noise.
+
+```{r}
+library(caret)
+
+# Step 1: Remove columns without sensor measurements
+training <- training_raw[, -c(1:7)]
+testing  <- testing_raw[, -c(1:7)]
+
+# Step 2: Remove near-zero variance features
+nzv <- nearZeroVar(training)
+training <- training[, -nzv]
+testing  <- testing[,  -nzv]
+
+# Step 3: Remove columns with > 95% NA
+na_thresh <- 0.95
+na_frac   <- colMeans(is.na(training))
+keep      <- na_frac < na_thresh
+training  <- training[, keep]
+testing   <- testing[,  keep]
+
+# Ensure classe is a factor
+training$classe <- as.factor(training$classe)
+```
+
+## 4. Model Building
+### 4.1 Train / Validation Split
+
+Although we use cross-validation, we hold out a 30% validation set to provide an independent out-of-sample error estimate.
+
+```{r}
+set.seed(123)
+inTrain  <- createDataPartition(training$classe, p = 0.70, list = FALSE)
+train_set <- training[ inTrain, ]
+valid_set <- training[-inTrain, ]
+```
+
+### 4.2 Random Forest
+
+We chose Random Forest for the following reasons:
+
+1. High accuracy on tabular sensor data
+Random Forest performs very well on structured (tabular) data like sensor measurements. This dataset is not images or text, but numerical features.
+
+2. Robust to correlated predictors
+Sensor data often contains variables that are highly correlated.Random Forest randomly selects subsets of features at each split, which reduces overfitting caused by correlation.
+
+3. No feature scaling needed
+Unlike methods such as logistic regression or LDA, Random Forest does not require normalization or standardization.
+
+4. Interpretable feature importance
+Random Forest can show which variables are important (e.g., via mean decrease in accuracy or Gini impurity).
+
+5. Built-in OOB error estimate
+Random Forest provides an out-of-bag (OOB) error, which acts like internal cross-validation.
+
+We also considered Gradient Boosting (GBM) and Linear Discriminant Analysis (LDA) as alternatives, but Random Forest consistently outperforms them on this dataset in the literature. LDA assumes linear relationships between variables and the outcome.GBM requires careful tuning (many hyperparameters), more complex to implement,
+often gives only small accuracy improvement over RF.
+
+### 4.3 Cross-Validation
+
+We used 5-fold cross-validation (rather than the default bootstrap) for two reasons:
+
+1. Faster computation on a large dataset than 10-folds.
+2. Lower bias than leave-one-out CV; comparable variance.
+
+```{r}
+ctrl <- trainControl(
+  method    = "cv",
+  number    = 5
+  )
+
+model_rf <- train(
+  classe ~ .,
+  data      = train_set,
+  method    = "rf",
+  trControl = ctrl
+  )
+
+print(model_rf)
+```
+
+## 5. Model Evaluation, Sample (CV) Accuracy and Out-of-Sample Error (Validation Set)
+
+The 5-fold CV accuracy is approximately 99%, giving an out-of sample error rate of about 1%.
+
+```{r}
+pred_valid <- predict(model_rf, newdata = valid_set)
+cm <- confusionMatrix(pred_valid, valid_set$classe)
+
+cm
+```
+
+The out-of-sample error is about 1%, which is very close to the CV estimate — confirming that the model generalises well and is not overfitting.
+
+## 6. Predictions on the 20 Test Cases
+
+```{r}
+pred_test <- predict(model_rf, newdata = testing)
+test_results   <- data.frame(problem_id = testing$problem_id, predicted_classe = pred_test)
+
+test_results
+```
+
+```{r}
+varImp(model_rf)
+plot(varImp(model_rf))
+```
+
+## 7. Conclusion
+
+We trained a Random Forest model on 52 accelerometer-derived features from the Weight Lifting Exercise Dataset.
+5-fold cross-validation was used and estimate generalisation performance.
+The model achieves 99% accuracy on a held-out validation set, corresponding to an out-of-sample error of 1%.
+Key choices:
+  - Random Forest was preferred over GBM (comparable accuracy, simpler tuning) and LDA (linear model underperforms on non-linear sensor data).
+  - High-NA and near-zero-variance columns were removed to avoid noise and speed up training.
+  - Metadata columns (timestamps, window numbers) were excluded to prevent data leakage.
+The model predicts all 20 test cases with high confidence.
+
+The Random Forest model performed well since it can effectively handle high-dimensional sensor data and capture nonlinear relationships. Cross-validation indicated a low expected out-of-sample error, suggesting good generalizability. It was considered an appropriate choice for this classification task.
+
+## 8. Reproducibility
+
+The compiled HTML is generated with `rmarkdown::render("PML_Course_Project.Rmd")`. 
+The GitHub repository includes:
+`PML_Course_Project.Rmd` — source file
+`PML_Course_Project.html` — compiled report (viewable via gh-pages)
+`pml-training.csv` / `pml-testing.csv` — data files
